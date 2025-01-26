@@ -1,6 +1,7 @@
 import random
 import tensorflow as tf
 """
+线性回归
 不用上层API实现以下内容:
 #   1.生成带噪声的数据
 #   2.创建小批次数据迭代器

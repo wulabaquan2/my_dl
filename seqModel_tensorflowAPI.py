@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 """
+线性回归
 用tensorflow上层API实现seqModel_basicCode.py的内容
 #   1.生成带噪声的数据: x.shape=(1000,2); y.shape=(1000,1)
 #   2.创建小批次数据迭代器
