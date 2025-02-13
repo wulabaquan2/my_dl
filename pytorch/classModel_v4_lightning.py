@@ -156,7 +156,7 @@ class LitClassModel(pl.LightningModule):
         val_acc=self.mean_valid_acc.compute()
         self.log("valid/loss", val_loss, prog_bar=True, logger=True)
         self.log("valid/acc", val_acc, prog_bar=True, logger=True)
-        self.log("step", self.current_epoch, logger=True)
+        self.log("step", self.current_epoch, logger=True) 
 
 
 
@@ -196,17 +196,18 @@ if __name__=="__main__":
 
     #创建性能分析器
     profiler = PyTorchProfiler(dirpath=train_config.train_logs,filename="classModel_v4_profiler")
-
+    #profiler2=AdvancedProfiler(dirpath=train_config.train_logs,filename="classModel_v4_advancedProfiler") #一直提示: ValueError: Another profiling tool is already active
+    
     #创建训练器
     trainer=pl.Trainer(
-        accelerator="auto",#自动选择加速器
-        devices="auto",#自动选择设备
-        strategy="auto",#自动选择策略
+        accelerator="auto",#自动选择加速器 
+        devices="auto",#自动选择设备 
+        strategy="auto",#自动选择策略 
         max_epochs=train_config.epochs,#最大训练轮数
         profiler=profiler,#性能分析器
         logger=tb_logger,#tensorboard日志
         callbacks=[model_checkpoint],#回调函数
-        enable_model_summary=True#启用模型摘要
+        enable_model_summary=True#启用模型摘要 
     )
 
     #开始训练
