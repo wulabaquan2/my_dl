@@ -31,183 +31,243 @@
 #include <vector>
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/opencv.hpp>
-// pretty prints a shape dimension vector
+#include <cuda_runtime.h>
+ // pretty prints a shape dimension vector
 std::string print_shape(const std::vector<std::int64_t>& v) {
-  std::stringstream ss("");
-  for (std::size_t i = 0; i < v.size() - 1; i++) ss << v[i] << "x";
-  ss << v[v.size() - 1];
-  return ss.str();
+	std::stringstream ss("");
+	for (std::size_t i = 0; i < v.size() - 1; i++) ss << v[i] << "x";
+	ss << v[v.size() - 1];
+	return ss.str();
 }
 
 int calculate_product(const std::vector<std::int64_t>& v) {
-  int total = 1;
-  for (auto& i : v) total *= i;
-  return total;
+	int total = 1;
+	for (auto& i : v) total *= i;
+	return total;
 }
 
 std::vector<float> softmax(const std::vector<float>& logits) {
-  std::vector<float> probabilities(logits.size());
-  float max_logit = *std::max_element(logits.begin(), logits.end());
-  float sum_exp = 0.0f;
+	std::vector<float> probabilities(logits.size());
+	float max_logit = *std::max_element(logits.begin(), logits.end());
+	float sum_exp = 0.0f;
 
-  for (size_t i = 0; i < logits.size(); ++i) {
-    probabilities[i] = std::exp(logits[i] - max_logit);
-    sum_exp += probabilities[i];
-  }
+	for (size_t i = 0; i < logits.size(); ++i) {
+		probabilities[i] = std::exp(logits[i] - max_logit);
+		sum_exp += probabilities[i];
+	}
 
-  for (size_t i = 0; i < logits.size(); ++i) {
-    probabilities[i] /= sum_exp;
-  }
+	for (size_t i = 0; i < logits.size(); ++i) {
+		probabilities[i] /= sum_exp;
+	}
 
-  return probabilities;
+	return probabilities;
 }
 
 template <typename T>
 Ort::Value vec_to_tensor(std::vector<T>& data, const std::vector<std::int64_t>& shape) {
-  Ort::MemoryInfo mem_info =
-      Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
-  auto tensor = Ort::Value::CreateTensor<T>(mem_info, data.data(), data.size(), shape.data(), shape.size());
-  return tensor;
+	Ort::MemoryInfo mem_info =
+		Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+	auto tensor = Ort::Value::CreateTensor<T>(mem_info, data.data(), data.size(), shape.data(), shape.size());
+	return tensor;
+}
+void listAvailableDevices() {
+	int deviceCount = 0;
+	cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
+
+	if (error_id != cudaSuccess) {
+		std::cerr << "cudaGetDeviceCount returned " << static_cast<int>(error_id) << " -> " << cudaGetErrorString(error_id) << std::endl;
+		return;
+	}
+
+	if (deviceCount == 0) {
+		std::cout << "There are no available device(s) that support CUDA." << std::endl;
+	}
+	else {
+		std::cout << "Detected " << deviceCount << " CUDA Capable device(s)." << std::endl;
+	}
+
+	for (int dev = 0; dev < deviceCount; ++dev) {
+		cudaDeviceProp deviceProp;
+		cudaGetDeviceProperties(&deviceProp, dev);
+		std::cout << "Device " << dev << ": " << deviceProp.name << std::endl;
+		std::cout << "  Total amount of global memory: " << deviceProp.totalGlobalMem << " bytes" << std::endl;
+		std::cout << "  Multiprocessors: " << deviceProp.multiProcessorCount << std::endl;
+		std::cout << "  GPU Max Clock rate: " << deviceProp.clockRate * 1e-3f << " MHz" << std::endl;
+		std::cout << "  Memory Clock rate: " << deviceProp.memoryClockRate * 1e-3f << " MHz" << std::endl;
+		std::cout << "  Memory Bus Width: " << deviceProp.memoryBusWidth << "-bit" << std::endl;
+	}
 }
 
 #ifdef _WIN32
 int wmain(int argc, ORTCHAR_T* argv[]) {
 #else
-int main(int argc, ORTCHAR_T* argv[]) {
+int main(int argc, ORTCHAR_T * argv[]) {
 #endif
-  //if (argc != 2) {
-  //  std::cout << "Usage: ./onnx-api-example <onnx_model.onnx>" << std::endl;
-  //  return -1;
-  //}
+	//if (argc != 2) {
+	//  std::cout << "Usage: ./onnx-api-example <onnx_model.onnx>" << std::endl;
+	//  return -1;
+	//}
 
-  //std::basic_string<ORTCHAR_T> model_file = argv[1];
+	//std::basic_string<ORTCHAR_T> model_file = argv[1];
 
-  // onnxruntime setup
+	// onnxruntime setup
 
- /* 
-    Input Node Name /
-      Shape(0)
-      : data : -1x3x224x224 Output Node Name /
-               Shape(0)
-      : resnetv15_dense0_fwd : -1x1000
-      */
+   /*
+	  Input Node Name /
+		Shape(0)
+		: data : -1x3x224x224 Output Node Name /
+				 Shape(0)
+		: resnetv15_dense0_fwd : -1x1000
+		*/
+	//listAvailableDevices();
+	Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "example-model-explorer");
+	Ort::SessionOptions session_options;
+	session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-  Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "example-model-explorer");
-  Ort::SessionOptions session_options;
-  Ort::Session session = Ort::Session(env, LR"(sam_vit_b_merge.onnx)", session_options);
+	// 设置执行模式为并行执行
+	session_options.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
 
-  // print name/shape of inputs
-  Ort::AllocatorWithDefaultOptions allocator;
-  std::vector<std::string> input_names;
-  std::vector<std::int64_t> input_shapes;
-  std::cout << "Input Node Name/Shape (" << input_names.size() << "):" << std::endl;
-  for (std::size_t i = 0; i < session.GetInputCount(); i++) {
-    input_names.emplace_back(session.GetInputNameAllocated(i, allocator).get());
-    input_shapes = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-    std::cout << "\t" << input_names.at(i) << " : " << print_shape(input_shapes) << std::endl;
-  }
+#ifdef USE_CUDA
+	try {
+		OrtCUDAProviderOptions options;
+		options.device_id = 0; // 使用 GPU 设备 0
+		options.arena_extend_strategy = 0;
+		options.gpu_mem_limit = 2 * 1024 * 1024 * 1024;
+		options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
+		options.do_copy_in_default_stream = 1;
+		session_options.AppendExecutionProvider_CUDA(options);
+	}
+	catch (const Ort::Exception& e) {
+		std::cerr << "Failed to append CUDA execution provider: " << e.what() << std::endl;
+		return -1;
+	}
+#endif // USE_CUDA
 
-  // print name/shape of outputs
-  std::vector<std::string> output_names;
-  std::cout << "Output Node Name/Shape (" << output_names.size() << "):" << std::endl;
-  for (std::size_t i = 0; i < session.GetOutputCount(); i++) {
-    output_names.emplace_back(session.GetOutputNameAllocated(i, allocator).get());
-    auto output_shapes = session.GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-    std::cout << "\t" << output_names.at(i) << " : " << print_shape(output_shapes) << std::endl;
-  }
+	Ort::Session session = Ort::Session(env, LR"(sam_vit_b_merge.onnx)", session_options);
+
+	// 获取当前会话的执行提供程序列表
+	std::vector<std::string> providers = Ort::GetAvailableProviders();
+
+	// 检查是否包含 CUDA 提供程序
+	for (const auto& provider : providers) {
+		std::cout << provider << std::endl;
+	}
+
+	// print name/shape of inputs
+	Ort::AllocatorWithDefaultOptions allocator;
+	std::vector<std::string> input_names;
+	std::vector<std::int64_t> input_shapes;
+	std::cout << "Input Node Name/Shape (" << input_names.size() << "):" << std::endl;
+	for (std::size_t i = 0; i < session.GetInputCount(); i++) {
+		input_names.emplace_back(session.GetInputNameAllocated(i, allocator).get());
+		input_shapes = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+		std::cout << "\t" << input_names.at(i) << " : " << print_shape(input_shapes) << std::endl;
+	}
+
+	// print name/shape of outputs
+	std::vector<std::string> output_names;
+	std::cout << "Output Node Name/Shape (" << output_names.size() << "):" << std::endl;
+	for (std::size_t i = 0; i < session.GetOutputCount(); i++) {
+		output_names.emplace_back(session.GetOutputNameAllocated(i, allocator).get());
+		auto output_shapes = session.GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+		std::cout << "\t" << output_names.at(i) << " : " << print_shape(output_shapes) << std::endl;
+	}
 
 
 
 
-  // Create a single Ort tensor of random numbers
-  auto input_shape = input_shapes;
+	// Create a single Ort tensor of random numbers
+	auto input_shape = input_shapes;
 
-  std::vector<Ort::Value> input_tensors;
-    /*
+	std::vector<Ort::Value> input_tensors;
+	/*
   Input Node Name/Shape (0):
-        input_image : 3x-1x-1
-        point_coords : -1x2
-        point_labels : -1
+		input_image : 3x-1x-1
+		point_coords : -1x2
+		point_labels : -1
 Output Node Name/Shape (0):
-        masks : -1x-1x-1x-1
-        iou_predictions : -1x1
+		masks : -1x-1x-1x-1
+		iou_predictions : -1x1
   */
   //srcData 
-  cv::Mat img = cv::imread(R"(truck.jpg)",
-      cv::IMREAD_ANYCOLOR);
-  std::vector<cv::Point> point_coords{ {575,750} };
-  std::vector<int>point_label{0};
-  std::vector<cv::Rect> rects{
-      cv::Rect(cv::Point(425,600),cv::Point(700,875))
-  };
-  //format srcData
-  cv::Mat input_image;
-  std::vector<std::int64_t> input_image_shape, point_coords_shape, point_labels_shape;
-  input_image = img.reshape(1, img.total()).t();
-  input_image.convertTo(input_image, CV_32F);
-  std::vector<float> point_coords_data;
-  std::vector<float>point_label_data;
-  for (int i = 0; i < point_coords.size(); i++) {
-	  point_coords_data.push_back(point_coords[i].x);
-	  point_coords_data.push_back(point_coords[i].y);
-      point_label_data.push_back(point_label[i]);
-  }
-  for (int i = 0; i < rects.size(); i++) {
-	  point_coords_data.push_back(rects[i].tl().x);
-	  point_coords_data.push_back(rects[i].tl().y);
-      point_label_data.push_back(2);
-	  point_coords_data.push_back(rects[i].br().x);
-	  point_coords_data.push_back(rects[i].br().y);
-      point_label_data.push_back(3);
-  }
+	cv::Mat img = cv::imread(R"(truck.jpg)",
+		cv::IMREAD_ANYCOLOR);
+	std::vector<cv::Point> point_coords{ {575,750} };
+	std::vector<int>point_label{ 0 };
+	std::vector<cv::Rect> rects{
+		cv::Rect(cv::Point(425,600),cv::Point(700,875))
+	};
+	//format srcData
+	cv::Mat input_image;
+	std::vector<std::int64_t> input_image_shape, point_coords_shape, point_labels_shape;
+	input_image = img.reshape(1, img.total()).t();
+	input_image.convertTo(input_image, CV_32F);
+	std::vector<float> point_coords_data;
+	std::vector<float>point_label_data;
+	for (int i = 0; i < point_coords.size(); i++) {
+		point_coords_data.push_back(point_coords[i].x);
+		point_coords_data.push_back(point_coords[i].y);
+		point_label_data.push_back(point_label[i]);
+	}
+	for (int i = 0; i < rects.size(); i++) {
+		point_coords_data.push_back(rects[i].tl().x);
+		point_coords_data.push_back(rects[i].tl().y);
+		point_label_data.push_back(2);
+		point_coords_data.push_back(rects[i].br().x);
+		point_coords_data.push_back(rects[i].br().y);
+		point_label_data.push_back(3);
+	}
 
-  //dynamic shape
-  input_image_shape = { 3, img.rows, img.cols };
-  point_coords_shape = { (int64_t)point_coords_data.size()/2, 2};
-  point_labels_shape = { (int64_t)point_label_data.size() };
+	//dynamic shape
+	input_image_shape = { 3, img.rows, img.cols };
+	point_coords_shape = { (int64_t)point_coords_data.size() / 2, 2 };
+	point_labels_shape = { (int64_t)point_label_data.size() };
 
-   Ort::MemoryInfo mem_info =
-       Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
-  input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, (float*)input_image.data, img.total() * 3,
-                                                           input_image_shape.data(), input_image_shape.size()));
-  input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, point_coords_data.data(), point_coords_data.size(),
-	  point_coords_shape.data(), point_coords_shape.size()));
-  input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, point_label_data.data(), point_label_data.size(), point_labels_shape.data(), point_labels_shape.size()));
+	Ort::MemoryInfo mem_info =
+		Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+	input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, (float*)input_image.data, img.total() * 3,
+		input_image_shape.data(), input_image_shape.size()));
+	input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, point_coords_data.data(), point_coords_data.size(),
+		point_coords_shape.data(), point_coords_shape.size()));
+	input_tensors.push_back(Ort::Value::CreateTensor<float>(mem_info, point_label_data.data(), point_label_data.size(), point_labels_shape.data(), point_labels_shape.size()));
 
-  // pass data through model
-  std::vector<const char*> input_names_char(input_names.size(), nullptr);
-  std::transform(std::begin(input_names), std::end(input_names), std::begin(input_names_char),
-                 [&](const std::string& str) { return str.c_str(); });
+	// pass data through model
+	std::vector<const char*> input_names_char(input_names.size(), nullptr);
+	std::transform(std::begin(input_names), std::end(input_names), std::begin(input_names_char),
+		[&](const std::string& str) { return str.c_str(); });
 
-  std::vector<const char*> output_names_char(output_names.size(), nullptr);
-  std::transform(std::begin(output_names), std::end(output_names), std::begin(output_names_char),
-                 [&](const std::string& str) { return str.c_str(); });
+	std::vector<const char*> output_names_char(output_names.size(), nullptr);
+	std::transform(std::begin(output_names), std::end(output_names), std::begin(output_names_char),
+		[&](const std::string& str) { return str.c_str(); });
 
-  std::cout << "Running model..." << std::endl;
-  try {
-    auto output_tensors = session.Run(Ort::RunOptions{nullptr}, input_names_char.data(), input_tensors.data(),
-                                      input_names_char.size(), output_names_char.data(), output_names_char.size());
-    
-    cv::Mat singleMask,singleMaskBinary;
-    float defaultThreshold = 0.;
-    float* floatarr = output_tensors.front().GetTensorMutableData<float>(); 
-    singleMask = cv::Mat(img.size(), CV_32F, floatarr);
-    float* singleMask_p = (float*)singleMask.data;
-    cv::Vec3b* img_p = (cv::Vec3b*)img.data;
-    for (int i = 0; i < singleMask.total(); i++)
-    {
-        if (singleMask_p[i] > 0)
-        {
-            img_p[i] = cv::Vec3b(0, 255, 0);
-        }
-    }
-    
+	std::cout << "Running model..." << std::endl;
+	try {
+		auto tt = cv::getTickCount();
+		auto output_tensors = session.Run(Ort::RunOptions{ nullptr }, input_names_char.data(), input_tensors.data(),
+			input_names_char.size(), output_names_char.data(), output_names_char.size());
+		std::cout << (cv::getTickCount() - tt) / cv::getTickFrequency();
 
-    // double-check the dimensions of the output tensors
-    // NOTE: the number of output tensors is equal to the number of output nodes specifed in the Run() call
-    assert(output_tensors.size() == output_names.size() && output_tensors[0].IsTensor());
-  } catch (const Ort::Exception& exception) {
-      std::cout << "ERROR running model inference: " << exception.what() << std::endl;
-    exit(-1);
-  }
+		cv::Mat singleMask, singleMaskBinary;
+		float defaultThreshold = 0.;
+		float* floatarr = output_tensors.front().GetTensorMutableData<float>();
+		singleMask = cv::Mat(img.size(), CV_32F, floatarr);
+		float* singleMask_p = (float*)singleMask.data;
+		cv::Vec3b* img_p = (cv::Vec3b*)img.data;
+		for (int i = 0; i < singleMask.total(); i++)
+		{
+			if (singleMask_p[i] > 0)
+			{
+				img_p[i] = cv::Vec3b(0, 255, 0);
+			}
+		}
+
+
+		// double-check the dimensions of the output tensors
+		// NOTE: the number of output tensors is equal to the number of output nodes specifed in the Run() call
+		assert(output_tensors.size() == output_names.size() && output_tensors[0].IsTensor());
+	}
+	catch (const Ort::Exception& exception) {
+		std::cout << "ERROR running model inference: " << exception.what() << std::endl;
+		exit(-1);
+	}
 }
